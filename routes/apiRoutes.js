@@ -35,6 +35,22 @@ module.exports = function (app) {
     return res.json(both);
   });
 
+  // this route recieves information about the user from the front-end and updates the "about_user" column in the database 
+  app.put("/users/aboutuser/", function (req, res) {
+    var user = req.body;
+    db.User.update({
+      about: user.aboutUser
+    }, {
+      where: {
+        name: user.name
+      }
+    }).then(function (updatedUser) {
+      console.log("user successfully updated!");
+      console.log(updatedUser);
+      return res.json(updatedUser);
+    });
+  });
+
   // create a route to update with "about me and user composite matches" 
   // maybe one route for each to avoid crossover? or have option req.params to differentiate 
   app.post("/users/", function (req, res) {
@@ -45,9 +61,9 @@ module.exports = function (app) {
         name: user.name,
         email: user.email
       }
-    }).then(function(dbUser) {
-      console.log("dbUser ", dbUser[0]); 
-      var userProfile = dbUser[0]; 
+    }).then(function (dbUser) {
+      console.log("dbUser ", dbUser[0]);
+      var userProfile = dbUser[0];
       if (dbUser.length === 0) {
         db.User.create({
           email: user.email,
@@ -95,7 +111,7 @@ module.exports = function (app) {
 
   // modify route to include userId 
   app.get("/users/posts/:id", function (req, res) {
-    var UserId = req.params.id; 
+    var UserId = req.params.id;
     db.User.findAll({
       where: {
         id: UserId
@@ -103,11 +119,107 @@ module.exports = function (app) {
       include: [{
         model: db.Posts
       }],
-      raw: true 
+      raw: true
     }).then(function (posts) {
-      console.log(posts); 
+      console.log(posts);
       return res.json(posts);
     });
+  });
+
+
+  app.post("/users/friends", function (req, res) {
+    // example post request from questionaire: 
+    //  {name: "Eyad", scores: [1,3,2,1,2,3,4,3,2,1], UserId: 1}
+
+    var results = req.body;
+    var newUser = {
+      name: results.name,
+      scores: parseInt(results.scores),
+      UserId: results.UserId
+    };
+
+    db.Scores.findAll({
+      include: [{
+        model: db.User
+      }],
+      raw: true
+    }).then(function (user) {
+      // console.log(user);
+      var friendScores = user.map(function (friend) {
+        var returnArr = [];
+        var x = 0;
+        for (var i = 0; i < 10; i++) {
+          returnArr.push(friend["Question" + (i + 1)]);
+        }
+        // Adding userId to the 10th index to allow for matching via querying the DB 
+        // returnArr.push("This is the UserId: ", friend.UserId);
+        returnArr.push(friend.UserId);
+        return returnArr;
+      });
+
+      var newUserScores = newUser.scores;
+      var config = {
+        objects: friendScores,
+      };
+
+      var nearestNeightbor = require("nearestneighbour")(config);
+      var resultsList = nearestNeightbor.nearest(newUserScores);
+      // console.log("===============================");
+      // console.log("resultsList: " , resultsList)
+      // console.log("===============================");
+      var length = resultsList.length;
+      var matchedUser1 = resultsList[0][10];
+      var matchedUser2 = resultsList[1][10];
+      var matchedUser3 = resultsList[2][10];
+      var enemyUser1 = resultsList[length - 1][10];
+      var enemyUser2 = resultsList[length - 2][10];
+      var enemyUser3 = resultsList[length - 3][10];
+
+
+      // use UserId to join matches with particular user 
+      db.User.findAll({
+        where: {
+          id: { in: [matchedUser1, matchedUser2, matchedUser3, enemyUser1, enemyUser2, enemyUser3],
+          }
+        }
+      }).then(function (bestUser) {
+        console.log("===============================");
+        console.log(bestUser);
+        console.log("===============================");
+
+        var persistMatch = [];
+        for (var i = 0; i < 3; i++) {
+          persistMatch.push({
+            name: bestUser[i].name,
+            email: bestUser[i].email,
+            picture: bestUser[i].picture,
+            about: bestUser[i].about,
+            UserId: newUser.UserId
+          });
+        }
+        
+        var persistEnemy = [];
+        for (var i = 3; i < 6; i++) {
+          persistEnemy.push({
+            name: bestUser[i].name,
+            email: bestUser[i].email,
+            picture: bestUser[i].picture,
+            about: bestUser[i].about,
+            UserId: newUser.UserId
+          });
+        }
+
+
+        db.Matches.bulkCreate(persistMatch).then(function (results) {
+          db.Enemies.bulkCreate(persistEnemy).then(function (otherResult) {
+            var combinedArray = results.concat("enemies-after:", otherResult);
+            return res.json(combinedArray);
+          });
+        });
+      });
+
+    });
+
   });
 
 }
